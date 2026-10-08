@@ -69,10 +69,14 @@ def crear(body: NuevoAviso, quien: Identidad = Depends(requiere_profesor), db: S
 
 
 @router.delete("/{id}", status_code=204)
-def borrar(id: int, _: Identidad = Depends(requiere_profesor), db: Session = Depends(get_db)) -> Response:
+def borrar(id: int, quien: Identidad = Depends(requiere_profesor), db: Session = Depends(get_db)) -> Response:
     aviso = db.get(Aviso, id)
     if aviso is None:
         raise ApiError(404, f"No existe el aviso {id}")
+    # Tener el rol no basta: el aviso tiene que ser suyo. El autor lo guardó el servidor
+    # al publicar, con la identidad del token; aquí se compara con la del token de ahora.
+    if aviso.autor != quien.usuario:
+        raise ApiError(403, "Solo quien publicó el aviso puede borrarlo", "no_es_tuyo", f'El aviso {id} es de "{aviso.autor}".')
     db.delete(aviso)
     db.commit()
     # Primero la fila y después el objeto: si el almacén falla, queda un archivo huérfano
