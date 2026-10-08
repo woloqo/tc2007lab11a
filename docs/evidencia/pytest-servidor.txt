@@ -1,0 +1,30 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.15, pytest-9.1.1, pluggy-1.6.0 -- /code/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /code
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.15.1
+collecting ... collected 19 items
+
+tests/test_contrato.py::test_sin_token_responde_401_con_la_forma_del_contrato PASSED [  5%]
+tests/test_contrato.py::test_un_token_alterado_no_sirve PASSED           [ 10%]
+tests/test_contrato.py::test_una_alumna_no_puede_publicar PASSED         [ 15%]
+tests/test_contrato.py::test_lo_que_publica_una_profesora_aparece_en_el_tablon PASSED [ 21%]
+tests/test_contrato.py::test_un_titulo_de_puros_espacios_no_se_guarda PASSED [ 26%]
+tests/test_duplicados.py::test_sin_clave_dos_envios_son_dos_avisos PASSED [ 31%]
+tests/test_duplicados.py::test_reintentar_con_la_misma_clave_no_crea_otro_aviso PASSED [ 36%]
+tests/test_duplicados.py::test_la_misma_clave_con_otro_contenido_se_rechaza PASSED [ 42%]
+tests/test_duplicados.py::test_la_clave_de_ana_no_le_estorba_a_bruno PASSED [ 47%]
+tests/test_huerfanas.py::test_si_el_aviso_falla_la_imagen_se_queda_en_el_almacen PASSED [ 52%]
+tests/test_huerfanas.py::test_la_limpieza_borra_la_huerfana_y_respeta_la_que_usa_un_aviso PASSED [ 57%]
+tests/test_huerfanas.py::test_la_limpieza_no_toca_una_imagen_recien_subida PASSED [ 63%]
+tests/test_permisos.py::test_ana_puede_borrar_su_propio_aviso PASSED     [ 68%]
+tests/test_permisos.py::test_una_alumna_no_puede_borrar_avisos PASSED    [ 73%]
+tests/test_permisos.py::test_bruno_no_puede_borrar_el_aviso_de_ana PASSED [ 78%]
+tests/test_seguridad.py::test_un_token_vencido_no_sirve PASSED           [ 84%]
+tests/test_seguridad.py::test_mandar_rol_profesor_sin_el_codigo_crea_un_alumno PASSED [ 89%]
+tests/test_seguridad.py::test_una_alumna_no_puede_subir_imagenes PASSED  [ 94%]
+tests/test_seguridad.py::test_la_contrasena_no_se_guarda_en_claro PASSED [100%]
+
+============================== 19 passed in 0.98s ==============================
