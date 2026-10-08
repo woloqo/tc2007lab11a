@@ -1,35 +1,62 @@
 """Tarjeta 2 · Envié una vez, aparecieron dos.
 
-La primera prueba NO dice cómo debería ser el servidor: dice cómo ES hoy. Se llama
-prueba de caracterización. Si su equipo implementa la protección contra duplicados,
-va a fallar, y eso es bueno: hay que reescribirla con el contrato nuevo.
-
-La segunda está apagada (skip). Es el contrato que su equipo tiene que diseñar.
-Cuando lo acuerden, quiten el skip y ajústenla a lo que decidieron.
+El contrato: el teléfono manda `Idempotency-Key` con un UUID que inventa al abrir
+la pantalla de publicar. El mismo envío con la misma clave devuelve el aviso que ya
+se guardó; la misma clave con otro contenido es un error. Sin clave, cada envío es
+un aviso nuevo: publicar dos avisos con el mismo título es válido.
 """
 
 import uuid
 
-import pytest
 from fastapi.testclient import TestClient
 
 from .conftest import Persona
 
+CUERPO = {"titulo": "Feria de proyectos", "cuerpo": "El viernes a las 12:00 en el patio central."}
 
-def test_hoy_el_mismo_envio_dos_veces_crea_dos_avisos(ana: Persona, publicar):
+
+def avisos_de(cliente: TestClient, quien: Persona) -> list[dict]:
+    return [a for a in cliente.get("/api/avisos", headers=quien.headers).json() if a["autor"] == quien.usuario]
+
+
+def test_sin_clave_dos_envios_son_dos_avisos(ana: Persona, publicar):
     primero = publicar(ana, titulo="Feria de proyectos")
     segundo = publicar(ana, titulo="Feria de proyectos")
 
     assert primero["id"] != segundo["id"]
 
 
-@pytest.mark.skip(reason="Tarjeta 2: primero acuerden el contrato (qué encabezado, qué responde el reintento, qué pasa si la clave llega con otro contenido)")
 def test_reintentar_con_la_misma_clave_no_crea_otro_aviso(cliente: TestClient, ana: Persona):
-    cuerpo = {"titulo": "Feria de proyectos", "cuerpo": "El viernes a las 12:00 en el patio central."}
     headers = {**ana.headers, "Idempotency-Key": str(uuid.uuid4())}
 
-    primero = cliente.post("/api/avisos", headers=headers, json=cuerpo)
-    reintento = cliente.post("/api/avisos", headers=headers, json=cuerpo)
+    primero = cliente.post("/api/avisos", headers=headers, json=CUERPO)
+    reintento = cliente.post("/api/avisos", headers=headers, json=CUERPO)
 
     assert primero.status_code == 201
+    assert reintento.status_code == 201
     assert reintento.json()["id"] == primero.json()["id"]
+    assert len(avisos_de(cliente, ana)) == 1
+
+
+def test_la_misma_clave_con_otro_contenido_se_rechaza(cliente: TestClient, ana: Persona):
+    headers = {**ana.headers, "Idempotency-Key": str(uuid.uuid4())}
+    cliente.post("/api/avisos", headers=headers, json=CUERPO)
+
+    r = cliente.post("/api/avisos", headers=headers, json={**CUERPO, "titulo": "Otro aviso distinto"})
+
+    assert r.status_code == 422
+    assert r.json()["code"] == "clave_reutilizada"
+    assert len(avisos_de(cliente, ana)) == 1
+
+
+def test_la_clave_de_ana_no_le_estorba_a_bruno(cliente: TestClient, ana: Persona, bruno: Persona):
+    # La clave es única por persona, no en todo el servidor: Bruno no puede «adivinar»
+    # la clave de Ana y recibir su aviso, ni bloquearle una publicación.
+    clave = str(uuid.uuid4())
+
+    de_ana = cliente.post("/api/avisos", headers={**ana.headers, "Idempotency-Key": clave}, json=CUERPO)
+    de_bruno = cliente.post("/api/avisos", headers={**bruno.headers, "Idempotency-Key": clave}, json=CUERPO)
+
+    assert de_bruno.status_code == 201
+    assert de_bruno.json()["id"] != de_ana.json()["id"]
+    assert de_bruno.json()["autor"] == bruno.usuario

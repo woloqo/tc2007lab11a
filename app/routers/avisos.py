@@ -2,17 +2,19 @@ import json
 import time
 from collections.abc import Iterator
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Header, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import almacen
 from ..db import SessionLocal, get_db
 from ..deps import Identidad, requiere_profesor, usuario_actual
 from ..errors import ApiError
-from ..models import Aviso
+from ..models import Aviso, Idempotencia
 from ..schemas import AvisoOut, NuevoAviso
+from ..security import sha256
 
 router = APIRouter(prefix="/avisos", tags=["avisos"])
 
@@ -55,19 +57,6 @@ def stream(request: Request, quien: Identidad = Depends(usuario_actual), desde: 
 
     return StreamingResponse(eventos(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-
-@router.post("", response_model=AvisoOut, status_code=201)
-def crear(body: NuevoAviso, quien: Identidad = Depends(requiere_profesor), db: Session = Depends(get_db)) -> Aviso:
-    # Una clave con buena forma no basta: la imagen tiene que estar en el almacén.
-    if body.imagen is not None and not almacen.existe(body.imagen):
-        raise ApiError(422, "Esa imagen no existe", "imagen_inexistente", "Súbela primero con POST /api/imagenes y manda la clave que te devuelve.")
-    aviso = Aviso(titulo=body.titulo, cuerpo=body.cuerpo, autor=quien.usuario, imagen=body.imagen)
-    db.add(aviso)
-    db.commit()
-    db.refresh(aviso)
-    return aviso
-
-
 @router.delete("/{id}", status_code=204)
 def borrar(id: int, quien: Identidad = Depends(requiere_profesor), db: Session = Depends(get_db)) -> Response:
     aviso = db.get(Aviso, id)
@@ -84,3 +73,50 @@ def borrar(id: int, quien: Identidad = Depends(requiere_profesor), db: Session =
     if aviso.imagen:
         almacen.borrar(aviso.imagen)
     return Response(status_code=204)
+
+def ya_publicado(db: Session, quien: Identidad, clave: str, huella: str) -> Aviso | None:
+    """El aviso que ya salió con esta clave, o None si es la primera vez que llega."""
+    previo = db.scalar(select(Idempotencia).where(Idempotencia.usuario == quien.usuario, Idempotencia.clave == clave))
+    if previo is None:
+        return None
+    if previo.huella != huella:
+        raise ApiError(
+            422,
+            "Esa clave ya se usó para publicar otro aviso",
+            "clave_reutilizada",
+            "Genera una Idempotency-Key nueva por publicación; repítela solo al reintentar la misma.",
+        )
+    return db.get(Aviso, previo.aviso_id)
+
+@router.post("", response_model=AvisoOut, status_code=201)
+def crear(
+    body: NuevoAviso,
+    quien: Identidad = Depends(requiere_profesor),
+    db: Session = Depends(get_db),
+    # La inventa el teléfono: una por publicación, la misma en cada reintento. Es opcional:
+    # sin ella, cada envío es un aviso nuevo, como antes.
+    clave: str | None = Header(default=None, alias="Idempotency-Key", max_length=64),
+) -> Aviso:
+    huella = sha256(body.model_dump_json())
+    if clave is not None and (previo := ya_publicado(db, quien, clave, huella)) is not None:
+        return previo
+    # Una clave con buena forma no basta: la imagen tiene que estar en el almacén.
+    if body.imagen is not None and not almacen.existe(body.imagen):
+        raise ApiError(422, "Esa imagen no existe", "imagen_inexistente", "Súbela primero con POST /api/imagenes y manda la clave que te devuelve.")
+    aviso = Aviso(titulo=body.titulo, cuerpo=body.cuerpo, autor=quien.usuario, imagen=body.imagen)
+    db.add(aviso)
+    if clave is not None:
+        db.flush()  # PostgreSQL asigna aviso.id sin cerrar la transacción
+        db.add(Idempotencia(usuario=quien.usuario, clave=clave, huella=huella, aviso_id=aviso.id))
+    try:
+        db.commit()  # el aviso y su clave se guardan juntos, o ninguno
+    except IntegrityError:
+        # Otro envío con la misma clave se guardó primero: los dos pasaron la consulta
+        # de arriba, y la restricción única dejó pasar solo a uno. Se responde el suyo.
+        db.rollback()
+        previo = ya_publicado(db, quien, clave, huella) if clave else None
+        if previo is None:
+            raise
+        return previo
+    db.refresh(aviso)
+    return aviso
