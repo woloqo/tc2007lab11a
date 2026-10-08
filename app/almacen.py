@@ -1,4 +1,4 @@
-"""El almacén de objetos, en un solo archivo. Todo lo demás le habla a estas cinco
+"""El almacén de objetos, en un solo archivo. Todo lo demás le habla a estas seis
 funciones y no sabe que del otro lado hay S3.
 
 Se usa boto3, el cliente oficial de Amazon S3: habla con cualquier almacén
@@ -6,11 +6,13 @@ compatible —RustFS aquí, MinIO, Cloudflare R2, Amazon S3 en producción—
 cambiando solo `S3_ENDPOINT` y las llaves.
 
 Un objeto es una clave ("3f2a….jpg"), unos bytes y su tipo. No hay carpetas, no
-hay consultas, no hay transacciones: guardar, leer, preguntar si existe y borrar.
+hay consultas, no hay transacciones: guardar, leer, preguntar si existe, listar y borrar.
 Por eso las imágenes van aquí y no en PostgreSQL, y por eso la base solo guarda
 la clave.
 """
 
+from collections.abc import Iterator
+from datetime import datetime
 from typing import Any
 
 import boto3
@@ -71,3 +73,10 @@ def existe(clave: str) -> bool:
 def borrar(clave: str) -> None:
     # Borrar lo que no existe no es error en S3: así borrar dos veces no truena.
     _s3.delete_object(Bucket=settings.s3_bucket, Key=clave)
+
+
+def listar() -> Iterator[tuple[str, datetime]]:
+    """Cada objeto del bucket: su clave y cuándo se guardó. S3 los entrega de mil en mil."""
+    for pagina in _s3.get_paginator("list_objects_v2").paginate(Bucket=settings.s3_bucket):
+        for objeto in pagina.get("Contents", []):
+            yield objeto["Key"], objeto["LastModified"]
